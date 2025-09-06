@@ -3,6 +3,7 @@ const axios = require("axios");
 const dotenv = require("dotenv");
 const { createServer } = require("http");
 const { Server } = require("socket.io");
+const { MongoClient } = require("mongodb");
 
 dotenv.config();
 
@@ -13,17 +14,77 @@ const io = new Server(server);
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 
+const {
+  GITHUB_TOKEN,
+  GITHUB_REPO,
+  GITHUB_FILE_PATH,
+  GITHUB_TOKEN2,
+  GITHUB_REPO2,
+  GITHUB_FILE_PATH2,
+  MONGODB_URI,
+  ADMIN_PASSWORD = "nafijpro"
+} = process.env;
+
+let systemLocked = false;
+const client = new MongoClient(MONGODB_URI);
+let logsCollection;
+
+// MongoDB connection and logging
+async function logAction(type, data = {}) {
+  if (!logsCollection) return;
+  await logsCollection.insertOne({ 
+    type, 
+    data, 
+    timestamp: new Date(),
+    ip: data.ip || 'unknown'
+  });
+}
+
+async function loadLockState() {
+  if (!logsCollection) return;
+  const last = await logsCollection
+    .find({ type: "lock-state" })
+    .sort({ timestamp: -1 })
+    .limit(1)
+    .toArray();
+  if (last.length) {
+    systemLocked = last[0].data.locked;
+    console.log(`🔒 Lock state restored: ${systemLocked ? "LOCKED" : "UNLOCKED"}`);
+  }
+}
+
+async function saveLockState(locked, ip = 'unknown') {
+  systemLocked = locked;
+  await logsCollection.insertOne({ 
+    type: "lock-state", 
+    data: { locked, ip }, 
+    timestamp: new Date() 
+  });
+}
+
+// Initialize MongoDB connection
+client.connect()
+  .then(async () => {
+    const db = client.db("secure_edit");
+    logsCollection = db.collection("edit_logs");
+    console.log("🟢 Connected to MongoDB");
+    await loadLockState();
+  })
+  .catch(err => {
+    console.error("❌ MongoDB connection failed:", err);
+  });
+
 const repos = {
   repo1: {
-    token: process.env.GITHUB_TOKEN,
-    repo: process.env.GITHUB_REPO,
-    filePath: process.env.GITHUB_FILE_PATH,
+    token: GITHUB_TOKEN,
+    repo: GITHUB_REPO,
+    filePath: GITHUB_FILE_PATH,
     name: "BOT COOKIE"
   },
   repo2: {
-    token: process.env.GITHUB_TOKEN2,
-    repo: process.env.GITHUB_REPO2,
-    filePath: process.env.GITHUB_FILE_PATH2,
+    token: GITHUB_TOKEN2,
+    repo: GITHUB_REPO2,
+    filePath: GITHUB_FILE_PATH2,
     name: "FACEBOOK COOKIE"
   }
 };
@@ -103,6 +164,7 @@ io.on('connection', (socket) => {
 app.get("/", async (req, res) => {
   try {
     const repoData = {};
+    const clientIP = req.ip || req.connection.remoteAddress || 'unknown';
     
     for (const [key, config] of Object.entries(repos)) {
       try {
@@ -127,13 +189,16 @@ app.get("/", async (req, res) => {
       }
     }
 
+    // Log page access
+    await logAction("page_access", { page: "dashboard", ip: clientIP });
+
     res.send(`
       <!DOCTYPE html>
       <html lang="en">
         <head>
           <meta charset="UTF-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Cookie Manager Dashboard</title>
+          <title>Cookie Manager Dashboard ${systemLocked ? '🔐' : ''}</title>
           <script src="/socket.io/socket.io.js"></script>
           <style>
             * {
@@ -188,6 +253,12 @@ app.get("/", async (req, res) => {
               50% { box-shadow: 0 0 30px rgba(102, 126, 234, 0.6); }
             }
             
+            @keyframes shake {
+              0%, 100% { transform: translateX(0); }
+              25% { transform: translateX(-5px); }
+              75% { transform: translateX(5px); }
+            }
+            
             .header {
               text-align: center;
               margin-bottom: 3rem;
@@ -204,6 +275,20 @@ app.get("/", async (req, res) => {
             .header p {
               font-size: 1.1rem;
               opacity: 0.9;
+            }
+            
+            .system-status {
+              position: fixed;
+              top: 20px;
+              left: 20px;
+              background: ${systemLocked ? 'rgba(220, 53, 69, 0.9)' : 'rgba(40, 167, 69, 0.9)'};
+              color: white;
+              padding: 0.5rem 1rem;
+              border-radius: 20px;
+              font-size: 0.9rem;
+              font-weight: bold;
+              z-index: 1000;
+              animation: ${systemLocked ? 'shake 2s infinite' : 'slideInRight 0.5s ease-out'};
             }
             
             .connection-status {
@@ -224,6 +309,33 @@ app.get("/", async (req, res) => {
             
             .connection-status.disconnected {
               color: #dc3545;
+            }
+            
+            .admin-controls {
+              position: fixed;
+              bottom: 20px;
+              right: 20px;
+              z-index: 1000;
+            }
+            
+            .admin-btn {
+              background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+              color: white;
+              border: none;
+              padding: 0.8rem 1.5rem;
+              border-radius: 25px;
+              font-size: 0.9rem;
+              font-weight: bold;
+              cursor: pointer;
+              transition: all 0.3s ease;
+              text-decoration: none;
+              display: inline-block;
+              box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+            }
+            
+            .admin-btn:hover {
+              transform: translateY(-2px);
+              box-shadow: 0 8px 25px rgba(0,0,0,0.3);
             }
             
             .repos-grid {
@@ -247,6 +359,7 @@ app.get("/", async (req, res) => {
               transition: all 0.3s ease;
               position: relative;
               overflow: hidden;
+              ${systemLocked ? 'opacity: 0.6; pointer-events: none;' : ''}
             }
             
             .repo-card::before {
@@ -305,6 +418,12 @@ app.get("/", async (req, res) => {
             .status-error {
               background: #f8d7da;
               color: #721c24;
+            }
+            
+            .status-locked {
+              background: #f8d7da;
+              color: #721c24;
+              animation: pulse 2s infinite;
             }
             
             .form-group {
@@ -400,6 +519,12 @@ app.get("/", async (req, res) => {
               box-shadow: 0 10px 20px rgba(252, 182, 159, 0.3);
             }
             
+            .btn:disabled {
+              opacity: 0.5;
+              cursor: not-allowed;
+              transform: none !important;
+            }
+            
             .error-message {
               background: #f8d7da;
               color: #721c24;
@@ -407,6 +532,18 @@ app.get("/", async (req, res) => {
               border-radius: 8px;
               margin-bottom: 1rem;
               border-left: 4px solid #dc3545;
+            }
+            
+            .locked-message {
+              background: #f8d7da;
+              color: #721c24;
+              padding: 1rem;
+              border-radius: 8px;
+              margin-bottom: 1rem;
+              border-left: 4px solid #dc3545;
+              text-align: center;
+              font-weight: bold;
+              animation: pulse 2s infinite;
             }
             
             .loading {
@@ -482,6 +619,7 @@ app.get("/", async (req, res) => {
               max-height: 80vh;
               overflow-y: auto;
               animation: slideInUp 0.3s ease-out;
+              position: relative;
             }
             
             @keyframes slideInUp {
@@ -559,15 +697,30 @@ app.get("/", async (req, res) => {
           </style>
         </head>
         <body>
+          <div class="system-status">
+            ${systemLocked ? '🔐 SYSTEM LOCKED' : '🟢 SYSTEM ACTIVE'}
+          </div>
+          
           <div class="connection-status" id="connectionStatus">
             🔌 Connecting...
+          </div>
+          
+          <div class="admin-controls">
+            <a href="/admin" class="admin-btn">🔧 Admin Panel</a>
           </div>
           
           <div class="container">
             <div class="header">
               <h1>🍪 Cookie Manager Dashboard</h1>
-              <p>Real-time cookie management with version control</p>
+              <p>Real-time cookie management with version control & MongoDB logging</p>
             </div>
+            
+            ${systemLocked ? `
+              <div class="locked-message">
+                🔐 SYSTEM IS CURRENTLY LOCKED - EDITING DISABLED
+                <br><small>Contact administrator to unlock the system</small>
+              </div>
+            ` : ''}
             
             <div class="repos-grid">
               ${Object.entries(repoData).map(([key, data]) => `
@@ -581,8 +734,8 @@ app.get("/", async (req, res) => {
                         <div><strong>Last updated:</strong> ${data.updatedAgo}</div>
                       </div>
                     </div>
-                    <div class="status-badge ${data.error ? 'status-error' : 'status-success'}">
-                      ${data.error ? 'Error' : 'Connected'}
+                    <div class="status-badge ${systemLocked ? 'status-locked' : (data.error ? 'status-error' : 'status-success')}">
+                      ${systemLocked ? 'Locked' : (data.error ? 'Error' : 'Connected')}
                     </div>
                   </div>
                   
@@ -599,16 +752,16 @@ app.get("/", async (req, res) => {
                         name="content" 
                         class="form-textarea" 
                         placeholder="Enter your cookie data here..."
-                        ${data.error ? 'disabled' : ''}
+                        ${data.error || systemLocked ? 'disabled' : ''}
                       >${data.content.replace(/</g, "&lt;").replace(/>/g, "&gt;")}</textarea>
                     </div>
-                    <button type="submit" class="btn ${key === 'repo1' ? 'btn-primary' : 'btn-secondary'}" ${data.error ? 'disabled' : ''}>
+                    <button type="submit" class="btn ${key === 'repo1' ? 'btn-primary' : 'btn-secondary'}" ${data.error || systemLocked ? 'disabled' : ''}>
                       <span class="btn-text">💾 Save Changes</span>
                       <span class="btn-loading" style="display: none;">
                         <span class="loading"></span>Saving...
                       </span>
                     </button>
-                    <button type="button" class="btn btn-history" onclick="showHistory('${key}')" ${data.error ? 'disabled' : ''}>
+                    <button type="button" class="btn btn-history" onclick="showHistory('${key}')" ${data.error || systemLocked ? 'disabled' : ''}>
                       📜 View History
                     </button>
                   </form>
@@ -646,8 +799,13 @@ app.get("/", async (req, res) => {
               setTimeout(() => location.reload(), 1500);
             });
             
-            socket.on('multipleUpdates', (data) => {
-              showNotification('✅ Both repositories updated successfully!', 'success');
+            socket.on('systemLocked', () => {
+              showNotification('🔐 System has been locked by administrator!', 'error');
+              setTimeout(() => location.reload(), 2000);
+            });
+            
+            socket.on('systemUnlocked', () => {
+              showNotification('🔓 System has been unlocked by administrator!', 'success');
               setTimeout(() => location.reload(), 2000);
             });
             
@@ -698,7 +856,7 @@ app.get("/", async (req, res) => {
                         <div class="commit-date">\${new Date(commit.commit.committer.date).toLocaleString()}</div>
                         <div class="commit-author">by \${commit.commit.author.name}</div>
                       </div>
-                      <button class="btn btn-restore" onclick="restoreVersion('\${repoKey}', '\${commit.sha}')">
+                      <button class="btn btn-restore" onclick="restoreVersion('\${repoKey}', '\${commit.sha}')" ${systemLocked ? 'disabled' : ''}>
                         🔄 Restore
                       </button>
                     </div>
@@ -777,6 +935,21 @@ app.get("/", async (req, res) => {
 
 app.post("/update/:repoKey", async (req, res) => {
   try {
+    const clientIP = req.ip || req.connection.remoteAddress || 'unknown';
+    
+    if (systemLocked) {
+      await logAction("blocked_edit", { repoKey: req.params.repoKey, ip: clientIP });
+      return res.status(403).send(`
+        <html>
+          <body style="font-family: monospace; padding: 2rem; background: #f8d7da; color: #721c24;">
+            <h2>🔐 System Locked</h2>
+            <p>Editing is currently disabled by administrator.</p>
+            <a href="/" style="color: #721c24;">← Go Back</a>
+          </body>
+        </html>
+      `);
+    }
+    
     const repoKey = req.params.repoKey;
     const repoConfig = repos[repoKey];
     
@@ -802,6 +975,14 @@ app.post("/update/:repoKey", async (req, res) => {
       }
     );
 
+    // Log the update
+    await logAction("file_update", { 
+      repoKey, 
+      repoName: repoConfig.name,
+      ip: clientIP,
+      contentLength: req.body.content.length
+    });
+
     // Emit real-time notification
     io.emit('fileUpdated', {
       repoKey,
@@ -821,6 +1002,294 @@ app.post("/update/:repoKey", async (req, res) => {
       </html>
     `);
   }
+});
+
+// Admin Panel
+app.get("/admin", (req, res) => {
+  res.send(`
+    <html>
+      <head>
+        <title>Admin Panel</title>
+        <style>
+          body { 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #fff; 
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace; 
+            padding: 2rem;
+            min-height: 100vh;
+            margin: 0;
+          }
+          .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: rgba(255,255,255,0.1);
+            padding: 2rem;
+            border-radius: 16px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+          }
+          input, button {
+            padding: 12px 20px;
+            font-size: 16px;
+            margin: 8px;
+            background: rgba(255,255,255,0.9);
+            color: #333;
+            border: 2px solid transparent;
+            border-radius: 8px;
+            font-family: inherit;
+            transition: all 0.3s ease;
+          }
+          input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.3);
+          }
+          button {
+            cursor: pointer;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            min-width: 150px;
+          }
+          .btn-lock {
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+            color: white;
+          }
+          .btn-unlock {
+            background: linear-gradient(135deg, #51cf66 0%, #40c057 100%);
+            color: white;
+          }
+          .btn-clear {
+            background: linear-gradient(135deg, #ff8cc8 0%, #ff6b9d 100%);
+            color: white;
+          }
+          .btn-logs {
+            background: linear-gradient(135deg, #74b9ff 0%, #0984e3 100%);
+            color: white;
+          }
+          button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+          }
+          .status {
+            text-align: center;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 2rem;
+            font-weight: bold;
+            font-size: 1.2rem;
+          }
+          .status.locked {
+            background: rgba(220, 53, 69, 0.2);
+            border: 2px solid #dc3545;
+            animation: pulse 2s infinite;
+          }
+          .status.unlocked {
+            background: rgba(40, 167, 69, 0.2);
+            border: 2px solid #28a745;
+          }
+          @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+          }
+          .back-link {
+            color: #fff;
+            text-decoration: none;
+            font-size: 1.1rem;
+            display: inline-block;
+            margin-top: 2rem;
+            padding: 0.5rem 1rem;
+            background: rgba(255,255,255,0.1);
+            border-radius: 8px;
+            transition: all 0.3s ease;
+          }
+          .back-link:hover {
+            background: rgba(255,255,255,0.2);
+            transform: translateX(-5px);
+          }
+          h2 {
+            text-align: center;
+            margin-bottom: 2rem;
+            font-size: 2rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+          }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <h2>🔧 Admin Control Panel</h2>
+          
+          <div class="status ${systemLocked ? 'locked' : 'unlocked'}">
+            ${systemLocked ? '🔐 SYSTEM IS LOCKED' : '🟢 SYSTEM IS ACTIVE'}
+          </div>
+          
+          <form method="POST" action="/admin">
+            <div style="text-align: center; margin-bottom: 2rem;">
+              <input type="password" name="password" placeholder="Enter admin password" required style="width: 250px;" />
+            </div>
+            
+            <div style="text-align: center;">
+              <button name="action" value="lock" class="btn-lock">🔐 Lock System</button>
+              <button name="action" value="unlock" class="btn-unlock">🔓 Unlock System</button>
+              <br>
+              <button name="action" value="clear" class="btn-clear">🧹 Clear All Files</button>
+              <button name="action" value="logs" class="btn-logs">📊 View Logs</button>
+            </div>
+          </form>
+          
+          <div style="text-align: center;">
+            <a href="/" class="back-link">⬅️ Back to Dashboard</a>
+          </div>
+        </div>
+      </body>
+    </html>
+  `);
+});
+
+app.post("/admin", async (req, res) => {
+  const { password, action } = req.body;
+  const clientIP = req.ip || req.connection.remoteAddress || 'unknown';
+  
+  if (password !== ADMIN_PASSWORD) {
+    await logAction("admin_failed_login", { ip: clientIP });
+    return res.status(401).send(`
+      <html>
+        <body style="font-family: monospace; padding: 2rem; background: #f8d7da; color: #721c24;">
+          <h2>❌ Access Denied</h2>
+          <p>Wrong password!</p>
+          <a href="/admin" style="color: #721c24;">← Try Again</a>
+        </body>
+      </html>
+    `);
+  }
+
+  if (action === "lock") {
+    await saveLockState(true, clientIP);
+    await logAction("admin_action", { action: "lock", ip: clientIP });
+    io.emit('systemLocked');
+    return res.send(`
+      <html>
+        <body style="font-family: monospace; padding: 2rem; background: #d4edda; color: #155724;">
+          <h2>✅ System Locked</h2>
+          <p>All editing has been disabled.</p>
+          <a href="/admin" style="color: #155724;">← Back to Admin</a>
+        </body>
+      </html>
+    `);
+  }
+
+  if (action === "unlock") {
+    await saveLockState(false, clientIP);
+    await logAction("admin_action", { action: "unlock", ip: clientIP });
+    io.emit('systemUnlocked');
+    return res.send(`
+      <html>
+        <body style="font-family: monospace; padding: 2rem; background: #d4edda; color: #155724;">
+          <h2>✅ System Unlocked</h2>
+          <p>Editing has been re-enabled.</p>
+          <a href="/admin" style="color: #155724;">← Back to Admin</a>
+        </body>
+      </html>
+    `);
+  }
+
+  if (action === "clear") {
+    try {
+      for (const [key, config] of Object.entries(repos)) {
+        const file = await getFileInfo(config);
+        await axios.put(
+          `https://api.github.com/repos/${config.repo}/contents/${config.filePath}`,
+          {
+            message: `File cleared by admin via Cookie Manager Dashboard`,
+            content: Buffer.from("").toString("base64"),
+            sha: file.sha
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${config.token}`,
+              Accept: "application/vnd.github+json"
+            }
+          }
+        );
+      }
+      await logAction("admin_action", { action: "clear_all", ip: clientIP });
+      return res.send(`
+        <html>
+          <body style="font-family: monospace; padding: 2rem; background: #d4edda; color: #155724;">
+            <h2>✅ All Files Cleared</h2>
+            <p>Both repository files have been cleared.</p>
+            <a href="/admin" style="color: #155724;">← Back to Admin</a>
+          </body>
+        </html>
+      `);
+    } catch (err) {
+      return res.status(500).send(`
+        <html>
+          <body style="font-family: monospace; padding: 2rem; background: #f8d7da; color: #721c24;">
+            <h2>❌ Clear Failed</h2>
+            <p><strong>Error:</strong> ${err.message}</p>
+            <a href="/admin" style="color: #721c24;">← Back to Admin</a>
+          </body>
+        </html>
+      `);
+    }
+  }
+
+  if (action === "logs") {
+    try {
+      const logs = await logsCollection
+        .find({})
+        .sort({ timestamp: -1 })
+        .limit(50)
+        .toArray();
+      
+      const logsHtml = logs.map(log => `
+        <div style="border: 1px solid #ddd; padding: 1rem; margin: 0.5rem 0; border-radius: 8px; background: rgba(255,255,255,0.1);">
+          <strong>${log.type.toUpperCase()}</strong> - ${new Date(log.timestamp).toLocaleString()}
+          <br><small>IP: ${log.data.ip || 'unknown'}</small>
+          <br><pre style="margin-top: 0.5rem; font-size: 0.9rem;">${JSON.stringify(log.data, null, 2)}</pre>
+        </div>
+      `).join('');
+      
+      return res.send(`
+        <html>
+          <head>
+            <title>System Logs</title>
+            <style>
+              body { 
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: #fff; 
+                font-family: monospace; 
+                padding: 2rem;
+                min-height: 100vh;
+                margin: 0;
+              }
+              .container {
+                max-width: 1000px;
+                margin: 0 auto;
+                background: rgba(255,255,255,0.1);
+                padding: 2rem;
+                border-radius: 16px;
+                backdrop-filter: blur(10px);
+                box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+              }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <h2>📊 System Logs (Last 50 entries)</h2>
+              ${logsHtml}
+              <a href="/admin" style="color: #fff; text-decoration: none; display: inline-block; margin-top: 2rem; padding: 0.5rem 1rem; background: rgba(255,255,255,0.1); border-radius: 8px;">← Back to Admin</a>
+            </div>
+          </body>
+        </html>
+      `);
+    } catch (err) {
+      return res.status(500).send("Failed to load logs: " + err.message);
+    }
+  }
+
+  res.send("❌ Unknown action. <a href='/admin'>Back</a>");
 });
 
 // API endpoint to get file history
@@ -843,6 +1312,13 @@ app.get("/api/history/:repoKey", async (req, res) => {
 // API endpoint to restore a specific version
 app.post("/api/restore/:repoKey/:sha", async (req, res) => {
   try {
+    const clientIP = req.ip || req.connection.remoteAddress || 'unknown';
+    
+    if (systemLocked) {
+      await logAction("blocked_restore", { repoKey: req.params.repoKey, sha: req.params.sha, ip: clientIP });
+      return res.status(403).json({ error: "System is locked" });
+    }
+    
     const { repoKey, sha } = req.params;
     const repoConfig = repos[repoKey];
     
@@ -874,6 +1350,14 @@ app.post("/api/restore/:repoKey/:sha", async (req, res) => {
       }
     );
     
+    // Log the restore
+    await logAction("file_restore", { 
+      repoKey, 
+      repoName: repoConfig.name,
+      sha: sha.substring(0, 7),
+      ip: clientIP
+    });
+    
     // Emit real-time notification
     io.emit('fileUpdated', {
       repoKey,
@@ -901,12 +1385,38 @@ app.get("/api/status", async (req, res) => {
     }
   }
   
+  status.systemLocked = systemLocked;
   res.json(status);
 });
+
+// 🤥 Fake console codes (keeping your original style)
+let chars = "アァイィウヴカガキギクグケコゴサシスセソタチツテトナニヌネノハバヒビフヘホマミムメモヤユヨラリルレロワン0123456789";
+let iCounter = 0;
+const interval = setInterval(() => {
+  if (iCounter++ > 30) return clearInterval(interval);
+  console.log(`%c${Array.from({ length: 50 }, () => chars[Math.floor(Math.random() * chars.length)]).join("")}`, "color: #0f0; font-family: monospace;");
+}, 100);
+
+console.log("%c⚠ WARNING ⚠", "color: red; font-size: 30px; font-weight: bold; text-shadow: 2px 2px black;");
+console.log("%cThis is a secure zone.\nAny inspection attempt will be logged.\nPowered by: NAFIJ PRO Security Systems™", "color: orange; font-size: 14px; font-family: monospace;");
+
+const style = "color: #0f0; font-family: monospace;";
+console.clear();
+console.log("%c🛸 INITIATING PROTOCOL: NAFIJ PRO SYSTEM OVERRIDE", style);
+
+setTimeout(() => console.log("%cConnecting to secure terminal...", style), 500);
+setTimeout(() => console.log("%cAuthorizing credentials: ****** ✔", style), 1000);
+setTimeout(() => console.log("%cFetching app data.json 🔍", style), 1500);
+setTimeout(() => console.log("%cBypassing firewall... [%c■■■■■■■■■░░░░░░░░░░%c] 45%%", style, "color: lime", style), 2000);
+setTimeout(() => console.log("%cPayload injection successful. Deploying scripts ⚙", style), 2500);
+setTimeout(() => console.log("%cActivating root shell... 🔓", style), 3000);
+setTimeout(() => console.log("%c[ACCESS GRANTED] Welcome, commander NAFIJ PRO 👨‍💻", "color: #00ff00; font-weight: bold; font-size: 16px;"), 3500);
 
 const port = process.env.PORT || 3000;
 server.listen(port, () => {
   console.log(`🚀 Cookie Manager Dashboard running at http://localhost:${port}`);
   console.log(`📊 Status API available at http://localhost:${port}/api/status`);
   console.log(`🔌 Socket.io enabled for real-time updates`);
+  console.log(`🗄️ MongoDB logging system active`);
+  console.log(`🔐 Admin panel available at http://localhost:${port}/admin`);
 });
