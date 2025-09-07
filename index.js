@@ -255,7 +255,9 @@ app.get("/", async (req, res) => {
             }
             
             .repo-card:hover {
-              animation: pulse 1.5s ease-in-out infinite;
+              background: linear-gradient(135deg, #2a2a3a 0%, #3a3a4a 100%);
+              border-color: #4a9eff;
+              transition: all 0.3s ease;
             }
             
             @keyframes glow {
