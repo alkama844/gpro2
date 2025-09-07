@@ -892,14 +892,8 @@ app.get("/", async (req, res) => {
                 const response = await fetch(\`/api/restore/\${repoKey}/\${sha}\`, {
                   method: 'POST'
                 });
-                
                 if (response.ok) {
                   showNotification('✅ Version restored successfully!', 'success');
-                  closeHistory();
-                  setTimeout(() => location.reload(), 1500);
-                } else {
-                  throw new Error('Failed to restore version');
-                }
               } catch (error) {
                 showNotification('Failed to restore version: ' + error.message, 'error');
               }
