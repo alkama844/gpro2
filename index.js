@@ -244,8 +244,18 @@ app.get("/", async (req, res) => {
             }
             
             @keyframes pulse {
-              0%, 100% { transform: scale(1); }
-              50% { transform: scale(1.05); }
+              0%, 100% { 
+                transform: scale(1);
+                box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+              }
+              50% { 
+                transform: scale(1.02);
+                box-shadow: 0 25px 50px rgba(102, 126, 234, 0.2);
+              }
+            }
+            
+            .repo-card:hover {
+              animation: pulse 1.5s ease-in-out infinite;
             }
             
             @keyframes glow {
@@ -288,7 +298,7 @@ app.get("/", async (req, res) => {
               font-size: 0.9rem;
               font-weight: bold;
               z-index: 1000;
-              animation: ${systemLocked ? 'shake 2s infinite' : 'slideInRight 0.5s ease-out'};
+              animation: ${systemLocked ? 'shake 1.5s infinite' : 'slideInRight 0.5s ease-out'};
             }
             
             .connection-status {
@@ -375,7 +385,6 @@ app.get("/", async (req, res) => {
             .repo-card:hover {
               transform: translateY(-5px);
               box-shadow: 0 25px 50px rgba(0,0,0,0.15);
-              animation: pulse 2s infinite;
             }
             
             .repo-header {
@@ -423,7 +432,18 @@ app.get("/", async (req, res) => {
             .status-locked {
               background: #f8d7da;
               color: #721c24;
-              animation: pulse 2s infinite;
+              animation: pulseStatus 2s infinite;
+            }
+            
+            @keyframes pulseStatus {
+              0%, 100% { 
+                transform: scale(1);
+                opacity: 1;
+              }
+              50% { 
+                transform: scale(1.05);
+                opacity: 0.8;
+              }
             }
             
             .form-group {
@@ -543,7 +563,7 @@ app.get("/", async (req, res) => {
               border-left: 4px solid #dc3545;
               text-align: center;
               font-weight: bold;
-              animation: pulse 2s infinite;
+              animation: pulseStatus 2s infinite;
             }
             
             .loading {
@@ -1082,15 +1102,11 @@ app.get("/admin", (req, res) => {
           .status.locked {
             background: rgba(220, 53, 69, 0.2);
             border: 2px solid #dc3545;
-            animation: pulse 2s infinite;
+            animation: pulseStatus 2s infinite;
           }
           .status.unlocked {
             background: rgba(40, 167, 69, 0.2);
             border: 2px solid #28a745;
-          }
-          @keyframes pulse {
-            0%, 100% { transform: scale(1); }
-            50% { transform: scale(1.02); }
           }
           .back-link {
             color: #fff;
@@ -1302,9 +1318,14 @@ app.get("/api/history/:repoKey", async (req, res) => {
       return res.status(400).json({ error: "Invalid repository key" });
     }
     
+    if (systemLocked) {
+      return res.status(403).json({ error: "System is locked" });
+    }
+    
     const history = await getFileHistory(repoConfig, 1, 20);
     res.json(history);
   } catch (err) {
+    console.error(`History API error for ${repoKey}:`, err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1387,6 +1408,142 @@ app.get("/api/status", async (req, res) => {
   
   status.systemLocked = systemLocked;
   res.json(status);
+});
+
+// Handle 404 errors
+app.use((req, res) => {
+  res.status(404).send(`
+    <html>
+      <head>
+        <title>404 - Page Not Found</title>
+        <style>
+          body {
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0;
+            color: white;
+          }
+          .error-container {
+            text-align: center;
+            background: rgba(255,255,255,0.1);
+            padding: 3rem;
+            border-radius: 16px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+            animation: fadeInUp 0.8s ease-out;
+          }
+          @keyframes fadeInUp {
+            from {
+              opacity: 0;
+              transform: translateY(30px);
+            }
+            to {
+              opacity: 1;
+              transform: translateY(0);
+            }
+          }
+          h1 {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+          }
+          p {
+            font-size: 1.2rem;
+            margin-bottom: 2rem;
+            opacity: 0.9;
+          }
+          .back-btn {
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+            color: white;
+            text-decoration: none;
+            padding: 1rem 2rem;
+            border-radius: 25px;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            display: inline-block;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+          }
+          .back-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+          }
+        </style>
+      </head>
+      <body>
+        <div class="error-container">
+          <h1>404</h1>
+          <p>🔍 Page not found</p>
+          <p>The page you're looking for doesn't exist or has been moved.</p>
+          <a href="/" class="back-btn">🏠 Go Home</a>
+        </div>
+      </body>
+    </html>
+  `);
+});
+
+// Handle server errors
+app.use((err, req, res, next) => {
+  console.error('Server error:', err);
+  res.status(500).send(`
+    <html>
+      <head>
+        <title>500 - Server Error</title>
+        <style>
+          body {
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', monospace;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0;
+            color: white;
+          }
+          .error-container {
+            text-align: center;
+            background: rgba(255,255,255,0.1);
+            padding: 3rem;
+            border-radius: 16px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.2);
+          }
+          h1 {
+            font-size: 4rem;
+            margin-bottom: 1rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+            color: #ff6b6b;
+          }
+          .back-btn {
+            background: linear-gradient(135deg, #ff6b6b 0%, #ee5a24 100%);
+            color: white;
+            text-decoration: none;
+            padding: 1rem 2rem;
+            border-radius: 25px;
+            font-weight: bold;
+            transition: all 0.3s ease;
+            display: inline-block;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+          }
+          .back-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0,0,0,0.3);
+          }
+        </style>
+      </head>
+      <body>
+        <div class="error-container">
+          <h1>500</h1>
+          <p>⚠️ Internal Server Error</p>
+          <p>Something went wrong on our end. Please try again later.</p>
+          <a href="/" class="back-btn">🏠 Go Home</a>
+        </div>
+      </body>
+    </html>
+  `);
 });
 
 // 🤥 Fake console codes (keeping your original style)
