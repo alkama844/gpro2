@@ -371,20 +371,10 @@ app.get("/", async (req, res) => {
               overflow: hidden;
               ${systemLocked ? 'opacity: 0.6; pointer-events: none;' : ''}
             }
-            
-            .repo-card::before {
-              content: '';
-              position: absolute;
-              top: 0;
-              left: 0;
-              right: 0;
-              height: 4px;
-              background: linear-gradient(90deg, #667eea, #764ba2);
-            }
-            
             .repo-card:hover {
-              transform: translateY(-5px);
-              box-shadow: 0 25px 50px rgba(0,0,0,0.15);
+                transform: translateY(-2px);
+                box-shadow: 0 8px 25px rgba(59, 130, 246, 0.3);
+                border-color: #3b82f6;
             }
             
             .repo-header {
