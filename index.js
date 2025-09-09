@@ -4,6 +4,7 @@ const dotenv = require("dotenv");
 const { createServer } = require("http");
 const { Server } = require("socket.io");
 const { MongoClient } = require("mongodb");
+const deployRoutes = require('./routes/deploy');
 
 dotenv.config();
 
@@ -160,6 +161,8 @@ io.on('connection', (socket) => {
     console.log('Admin disconnected:', socket.id);
   });
 });
+
+app.use('/deploy', deployRoutes);
 
 app.get("/", async (req, res) => {
   try {
